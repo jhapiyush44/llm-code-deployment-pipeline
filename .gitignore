@@ -1,0 +1,15 @@
+# Ignore Python cache and environment files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+.env.*
+# VSCode
+.vscode/
+# OS files
+.DS_Store
+Thumbs.db
+# Ignore generated tasks
+/generated_tasks/
