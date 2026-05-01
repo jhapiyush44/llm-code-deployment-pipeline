@@ -1,197 +1,373 @@
-# LLM Code Deployment Pipeline
+# ⚡ LLM Code Deployment Pipeline
 
-A robust FastAPI service that automatically generates, deploys, and manages web applications using LLM (Gemini) for code generation and GitHub Pages for hosting. The system handles multi-round task assignments, processes attachments, and provides automated evaluation feedback.
+> **A fully automated FastAPI service** that takes a plain-text task description, generates a complete web application using Gemini, deploys it live to GitHub Pages, and notifies an evaluation server — all in a single API call.
 
-## 🎯 Features
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Latest-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Gemini](https://img.shields.io/badge/LLM-Gemini_API-4285F4?style=flat&logo=google&logoColor=white)](https://aistudio.google.com)
+[![GitHub Pages](https://img.shields.io/badge/Hosting-GitHub_Pages-181717?style=flat&logo=github&logoColor=white)](https://pages.github.com)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat)](LICENSE)
 
-| Feature | Description |
-|---------|-------------|
-| 🤖 AI Code Generation | Leverages Gemini API for intelligent code generation based on task requirements |
-| 🚀 Automated Deployment | Seamlessly deploys generated applications to GitHub Pages |
-| 📊 Multi-Round Support | Handles multiple rounds of task submissions and improvements |
-| 🖼️ Attachment Processing | Processes image attachments with Base64/Data URI support |
-| 🔄 Evaluation Integration | Built-in evaluation server notification system |
-| 🔐 Secure Configuration | Environment-based configuration with secret management |
+---
+
+## 📌 Overview
+
+This project automates the entire lifecycle of **LLM-powered web app creation and deployment** — from a raw task specification to a publicly hosted, live application — without any manual steps in between.
+
+The system was built to handle multi-round assignment pipelines (as used in the **TDS course at IIT Madras**), where each round delivers a new task, expects a deployed result, and scores based on the output. The pipeline handles all of it:
+
+- Receives structured task assignments via a REST endpoint
+- Processes attached images (Base64 / Data URI)
+- Prompts **Gemini** to generate a complete, self-contained web application
+- Creates or updates a **GitHub repository** programmatically
+- Deploys the output to **GitHub Pages** and waits for it to go live
+- Notifies the **evaluation server** with the live URL
+- Handles multi-round feedback loops and iterative improvements
+
+---
 
 ## 🏗️ Architecture
 
-| Component | Purpose |
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Incoming Request                         │
+│           POST /task  { task_description, attachments }         │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     FastAPI Application                         │
+│                          app.py                                 │
+│                                                                 │
+│   ┌──────────────────┐        ┌──────────────────────────────┐  │
+│   │  models.py       │        │  config.py                   │  │
+│   │  Pydantic request│        │  Env vars + secret mgmt      │  │
+│   │  / response      │        │  (Gemini key, GitHub token)  │  │
+│   └──────────────────┘        └──────────────────────────────┘  │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+                ┌───────────────┼────────────────┐
+                │               │                │
+                ▼               ▼                ▼
+    ┌───────────────┐ ┌──────────────┐ ┌──────────────────┐
+    │  helpers.py   │ │  helpers.py  │ │   helpers.py     │
+    │               │ │              │ │                  │
+    │  Attachment   │ │  Gemini API  │ │  GitHub API      │
+    │  Processing   │ │  Code Gen    │ │  Repo + Pages    │
+    │  Base64/URI   │ │  Prompting   │ │  Deployment      │
+    └───────────────┘ └──────┬───────┘ └──────┬───────────┘
+                             │                │
+                             ▼                ▼
+                    ┌─────────────┐   ┌──────────────────┐
+                    │ Generated   │──▶│  GitHub Pages    │
+                    │ index.html  │   │  Live public URL │
+                    │ README.md   │   └──────────────────┘
+                    │ LICENSE     │            │
+                    └─────────────┘            ▼
+                                    ┌──────────────────────┐
+                                    │  Evaluation Server   │
+                                    │  Notified with URL   │
+                                    └──────────────────────┘
+```
+
+---
+
+## 🔄 End-to-End Workflow
+
+### Step 1 — Task Reception
+The service receives a `POST /task` request containing the task description, round number, student credentials, and optional image attachments. Pydantic models in `models.py` validate and parse the incoming payload. Attachments are decoded from Base64 or Data URI format and prepared for the prompt.
+
+### Step 2 — Code Generation via Gemini
+The task description (and any decoded images) are structured into a detailed prompt and sent to the **Gemini API** via `helpers.py`. The LLM returns a complete, self-contained `index.html` web application — styled, functional, and ready to deploy. The prompt is engineered to produce clean, standalone HTML/CSS/JS with no external build steps required.
+
+### Step 3 — GitHub Repository Management
+Using the **GitHub REST API** (via `httpx`), the pipeline:
+- Creates a new repository if it doesn't exist, or updates the existing one
+- Commits `index.html`, `README.md`, and `LICENSE` in a single push
+- Enables **GitHub Pages** on the `main` branch
+- Polls the Pages API until the deployment is confirmed live
+
+### Step 4 — Evaluation Notification
+Once the live URL is confirmed, the pipeline POSTs the URL back to the **evaluation server** along with student credentials and round metadata. The evaluation server scores the submission and may return a new task for the next round.
+
+### Step 5 — Multi-Round Loop
+If the evaluation response contains a follow-up task, the pipeline re-enters the workflow from Step 2, incorporating any feedback or new requirements — supporting iterative improvement across multiple rounds.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                  Multi-Round Flow                        │
+│                                                          │
+│  Round 1 Task ──▶ Generate ──▶ Deploy ──▶ Evaluate      │
+│                                               │          │
+│                    ┌──────────────────────────┘          │
+│                    │  Feedback + Round 2 Task            │
+│                    ▼                                     │
+│  Round 2 Task ──▶ Generate ──▶ Deploy ──▶ Evaluate      │
+│                                               │          │
+│                    ┌──────────────────────────┘          │
+│                    │  ... continues until END            │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## ✨ Features
+
+| Capability | Details |
 |-----------|---------|
-| `main.py` | FastAPI application entry point and endpoint definitions |
-| `helpers.py` | Utility functions for LLM integration and file operations |
-| `models.py` | Pydantic models for request/response validation |
-| `config.py` | Configuration management using environment variables |
-| `constants.py` | System-wide constants and API endpoints |
+| 🤖 AI Code Generation | Gemini API generates complete, self-contained web apps from a text prompt |
+| 🖼️ Attachment Processing | Decodes Base64 and Data URI image attachments for multimodal prompting |
+| 🚀 Automated Deployment | Creates GitHub repos and enables Pages — no manual steps |
+| 🔁 Multi-Round Support | Handles iterative evaluation loops with feedback-aware re-generation |
+| 📬 Evaluation Integration | Auto-notifies the scoring server with the live URL after each deployment |
+| 🔐 Secure Config | All secrets managed via environment variables — nothing hardcoded |
+| 🐳 Docker-Ready | Single `docker run` spins up the full service |
+| ⚡ Async Throughout | Built on `httpx` async client for non-blocking GitHub + Gemini API calls |
+| 🛡️ Error Handling | Exponential backoff retries on API failures; structured error responses |
 
-## 📋 API Endpoints
+---
 
-| Endpoint | Description |
-|----------|-------------|
-| POST `/task` | Receives task assignments and triggers code generation |
-| GET `/status` | Retrieves current task processing status |
+## 📁 Project Structure
 
-## 🔧 Setup
-
-1. Clone the repository:
-```bash
-git clone https://github.com/jhapiyush44/llm-code-deployment-pipeline.git
-cd llm-code-deployment-pipeline
+```
+llm-code-deployment-pipeline/
+├── app.py              # FastAPI application — endpoints, startup, routing
+├── helpers.py          # Core logic: Gemini prompting, GitHub API, deployment
+├── models.py           # Pydantic schemas for request/response validation
+├── config.py           # Environment variable loading & configuration
+├── constants.py        # API base URLs, prompt templates, system constants
+├── requirements.txt    # Python dependencies
+├── Dockerfile          # Container definition for deployment
+├── .gitignore
+└── README.md
 ```
 
-2. Create and configure environment variables:
-```bash
-cp .env.example .env
-# Edit .env with your credentials:
-# - GEMINI_API_KEY
-# - GITHUB_TOKEN
-# - GITHUB_USERNAME
-# - STUDENT_SECRET
+### File Responsibilities
+
+**`app.py`** — The FastAPI entry point. Defines `/task` and `/status` endpoints. Handles request routing, dependency injection, and startup events.
+
+**`helpers.py`** — The engine of the pipeline. Contains the Gemini API integration (prompt construction, response parsing), GitHub repository creation/update logic, Pages deployment polling, and evaluation server notification.
+
+**`models.py`** — Pydantic models that validate all incoming task payloads and outgoing responses. Ensures type safety and provides clear API contracts.
+
+**`config.py`** — Loads all secrets and configuration from environment variables. Single source of truth for API keys, GitHub credentials, and runtime settings.
+
+**`constants.py`** — Stores GitHub API base URLs, Gemini model names, prompt system instructions, and other values that should not be scattered across the codebase.
+
+---
+
+## 🌐 API Reference
+
+### `POST /task`
+
+Receives a task assignment and triggers the full generate → deploy → notify pipeline.
+
+**Request body:**
+
+```json
+{
+  "email": "your.email@example.com",
+  "secret": "your_student_secret",
+  "round": 1,
+  "task": "Create a responsive calculator web app with a dark theme and keyboard support.",
+  "attachments": [
+    {
+      "filename": "mockup.png",
+      "data": "data:image/png;base64,iVBORw0KGgo..."
+    }
+  ]
+}
 ```
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
+**Response:**
+
+```json
+{
+  "status": "success",
+  "round": 1,
+  "deployed_url": "https://jhapiyush44.github.io/task-round-1/",
+  "message": "Deployed and evaluation server notified."
+}
 ```
 
-4. Run the server:
-```bash
-uvicorn app:app --reload
+---
+
+### `GET /status`
+
+Returns the current processing state of the pipeline.
+
+**Response:**
+
+```json
+{
+  "status": "idle",
+  "last_round": 1,
+  "last_deployed_url": "https://jhapiyush44.github.io/task-round-1/"
+}
 ```
 
-## 🔄 Workflow
+---
 
-1. **Task Reception**
-   - System receives task details and attachments
-   - Validates student credentials and task parameters
+## ⚙️ Configuration
 
-2. **Code Generation**
-   - Processes task requirements
-   - Generates web application using Gemini API
-   - Creates necessary documentation
+Create a `.env` file in the project root:
 
-3. **Deployment**
-   - Creates/updates GitHub repository
-   - Deploys to GitHub Pages
-   - Notifies evaluation server
-
-4. **Evaluation**
-   - Handles evaluation server feedback
-   - Supports multiple rounds of improvements
-
-## 🛠️ Configuration
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+GITHUB_TOKEN=your_github_personal_access_token
+GITHUB_USERNAME=your_github_username
+STUDENT_SECRET=your_task_submission_secret
+```
 
 | Variable | Purpose | Required |
 |----------|---------|----------|
-| `GEMINI_API_KEY` | Authentication for Gemini API | Yes |
-| `GITHUB_TOKEN` | GitHub API authentication | Yes |
-| `GITHUB_USERNAME` | GitHub account for deployments | Yes |
-| `STUDENT_SECRET` | Authentication for task submissions | Yes |
+| `GEMINI_API_KEY` | Authenticates calls to the Gemini generation API | ✅ |
+| `GITHUB_TOKEN` | PAT with `repo` and `pages` scopes for repo + Pages management | ✅ |
+| `GITHUB_USERNAME` | GitHub account under which repos are created | ✅ |
+| `STUDENT_SECRET` | Auth token for task submission validation | ✅ |
+
+**GitHub token scopes required:**
+- `repo` — full repository access (create, push, update)
+- `pages` — enable and configure GitHub Pages
+
+Generate a Gemini API key at: [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)  
+Generate a GitHub PAT at: [github.com/settings/tokens](https://github.com/settings/tokens)
+
+---
 
 ## 📦 Generated Artifacts
 
-Each task generates:
+Each successful task execution creates the following files in the deployed GitHub repository:
 
 | File | Description |
 |------|-------------|
-| `index.html` | Main web application file |
-| `README.md` | Project documentation |
-| `LICENSE` | MIT license file |
+| `index.html` | Complete self-contained web application (HTML + CSS + JS in one file) |
+| `README.md` | Auto-generated documentation describing the app and its features |
+| `LICENSE` | MIT license applied to the generated project |
 
-## 🤝 Contributing
+---
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+## ▶️ Running Locally
+
+### Prerequisites
+
+- Python 3.10+
+- A GitHub account with a Personal Access Token
+- A Gemini API key
+
+### Setup
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/jhapiyush44/llm-code-deployment-pipeline.git
+cd llm-code-deployment-pipeline
+
+# 2. Create a virtual environment
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Configure environment
+cp .env.example .env            # then fill in your values
+
+# 5. Start the server
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+```
+
+API available at: `http://localhost:8000`  
+Interactive docs at: `http://localhost:8000/docs`
+
+### Quick test
+
+```bash
+curl -X POST http://localhost:8000/task \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "your@email.com",
+    "secret": "your_secret",
+    "round": 1,
+    "task": "Build a Pomodoro timer with start/stop/reset controls and a clean UI.",
+    "attachments": []
+  }'
+```
+
+---
+
+## 🐳 Docker Deployment
+
+```bash
+# Build the image
+docker build -t llm-deploy-pipeline .
+
+# Run with environment variables
+docker run -p 8000:8000 \
+  -e GEMINI_API_KEY="your_key" \
+  -e GITHUB_TOKEN="your_token" \
+  -e GITHUB_USERNAME="your_username" \
+  -e STUDENT_SECRET="your_secret" \
+  llm-deploy-pipeline
+```
+
+---
+
+## 🤗 Deploying to Hugging Face Spaces
+
+This repo includes a `Dockerfile` configured for Hugging Face Spaces (port `7860`).
+
+```bash
+# 1. Create a new Docker Space on huggingface.co
+
+# 2. Add your secrets in the Space settings:
+#    GEMINI_API_KEY, GITHUB_TOKEN, GITHUB_USERNAME, STUDENT_SECRET
+
+# 3. Push this repo to your Space
+git remote add hf https://huggingface.co/spaces/YOUR_HF_USERNAME/space-name
+git push hf main
+```
+
+The Space will build from the Dockerfile and your service will be live at `https://huggingface.co/spaces/YOUR_HF_USERNAME/space-name`.
+
+> ⚠️ Never commit API keys or tokens to git. Always use the Space's "Secrets" settings panel.
+
+---
+
+## 🛡️ Error Handling
+
+| Error Scenario | Handling Strategy |
+|----------------|-------------------|
+| Gemini API failure | Automatic retry with exponential backoff |
+| GitHub API rate limit | Detects 429 responses, backs off, retries |
+| Pages deployment delay | Polls the Pages API until live (with timeout) |
+| Invalid task payload | Pydantic raises a structured `422 Unprocessable Entity` |
+| Missing environment variables | Config module raises at startup with a clear message |
+| Evaluation server unreachable | Logs the failure, returns partial success with deployed URL |
+
+---
+
+## 🔮 Roadmap
+
+- [ ] Support for multiple LLM backends (OpenAI GPT-4o, Claude, local Ollama)
+- [ ] Vercel / Netlify deployment as alternatives to GitHub Pages
+- [ ] Screenshot-based visual evaluation of deployed apps
+- [ ] Web UI dashboard for task history and deployment status
+- [ ] Prompt versioning and A/B testing for code generation quality
+
+---
+
+## 👨‍💻 Author
+
+**Piyush Jha** — ML Engineer & Python Developer  
+[GitHub](https://github.com/jhapiyush44) · [LinkedIn](https://www.linkedin.com/in/piyush-jha-3904a81a6/) · jhapiyush44@gmail.com
+
+---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
-## 🔍 Error Handling
+---
 
-| Error Type | Handling Strategy |
-|------------|------------------|
-| API Failures | Automatic retries with exponential backoff |
-| Invalid Requests | Detailed error responses via FastAPI |
-| Deployment Issues | Robust cleanup and recovery mechanisms |
-
-## 🔗 Dependencies
-
-| Package | Usage |
-|---------|--------|
-| FastAPI | Web framework |
-| Pydantic | Data validation |
-| httpx | Async HTTP client |
-| GitPython | Git operations |
-| python-dotenv | Environment management |
-
-## 📝 Notes
-
-- Ensure proper GitHub permissions for repository creation and Pages deployment
-- Configure GitHub token with appropriate scopes
-- Monitor API rate limits for both Gemini and GitHub
-- Keep secrets secure and never commit them to version control
-
-## 🚀 Deploying to Hugging Face Spaces
-
-You can deploy the generated web app to Hugging Face Spaces either as a Python (Gradio/Streamlit) Space using `requirements.txt` or as a Docker-based Space using the provided `Dockerfile`.
-
-Below are concise steps and PowerShell-friendly commands to get you started.
-
-### Option A — Python Space (Gradio / Streamlit)
-
-1. Install the Hugging Face CLI and log in:
-
-```powershell
-pip install huggingface_hub
-huggingface-cli login
-# Follow the prompt to paste your HF token
-```
-
-2. Create a new Space on Hugging Face (via web UI) or from the CLI:
-
-```powershell
-# Create from CLI (replace YOUR-USERNAME and space-name)
-hf api repos/create -y --type=space --name YOUR-USERNAME/space-name
-```
-
-3. Prepare your repository
-
-- Ensure `requirements.txt` lists runtime dependencies (FastAPI, uvicorn, gradio/streamlit if used, etc.).
-- Add a minimal `app.py` or `app` entrypoint expected by your chosen frontend (Gradio/Streamlit). For a pure backend FastAPI app, you can include a tiny `app.py` that starts the server or use Docker (Option B).
-
-4. Push code to the Space
-
-```powershell
-git init
-git remote add origin https://huggingface.co/spaces/YOUR-USERNAME/space-name
-git add .
-git commit -m "Initial commit: deploy app to HF Spaces"
-git push origin main
-```
-
-Notes:
-- The Space will install packages from `requirements.txt` automatically.
-- For Gradio/Streamlit front-ends, HF will detect and run them automatically.
-
-### Option B — Docker-based Space
-
-If your project already contains a `Dockerfile` (this repo does), you can deploy using Docker. This gives you full control over the runtime.
-
-1. Create a Space and enable Docker in the Space settings (choose "Dockerfile" type) via the Hugging Face web UI.
-
-2. Push your repository to the Space (same push commands as above). The Space build will use your `Dockerfile`.
-
-3. Troubleshooting tips
-
-- If builds fail, check the build logs on the Space page for missing packages or permission errors.
-- Ensure any runtime secrets (API keys) are set using the Space's "Secrets" settings — do NOT commit secrets to git.
-
-### Quick checklist before deploying
-
-- [ ] Add/verify `requirements.txt` contains everything needed for the app to run.
-- [ ] If using Docker, confirm `Dockerfile` builds locally: `docker build -t test-app .` (optional)
-- [ ] Add a short `README.md` in the generated artifact folder to explain the Space's purpose.
-- [ ] Configure HF Space secrets for any API keys (Gemini/GitHub tokens) rather than committing them.
+*Found this useful? Consider leaving a ⭐ — it helps others discover the project!*
